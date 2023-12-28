@@ -66,13 +66,13 @@ int main(int argc, char **argv)
     ros::init(argc,argv,"openvio");
 
     cv::Mat image(cv::Size(752,480),CV_8UC1);
-    image_transport::Publisher pub;
+    image_transport::Publisher img_pub;
     ros::NodeHandle node;
 
     imu_pub = node.advertise<sensor_msgs::Imu>("/imu0", 1000);
     ros::NodeHandle nh;
     image_transport::ImageTransport it(nh);
-    pub = it.advertise("/cam0/image_raw", 1);
+    img_pub = it.advertise("/cam0/image_raw", 1);
     ros::Rate loop_rate(100);
 
     if (openvio_init(1) == 1)
@@ -95,7 +95,7 @@ int main(int argc, char **argv)
             header.stamp = img_get(image);
 
             msg = cv_bridge::CvImage(header, "mono8", image).toImageMsg();
-                pub.publish(msg);
+            img_pub.publish(msg);
 
             img_flag = 0;
         }
