@@ -164,7 +164,7 @@ void *cam_catch_thread(void *)
     int camRecvLen;
     int recv_head_status = 0;
     uint8_t head_tmp[1024];
-    
+    uint32_t fcount,cfcount;
 
     printf("cam_catch_thread start\r\n");
 
@@ -182,56 +182,113 @@ void *cam_catch_thread(void *)
         }
         else
         {
-            
+        
+            recv_count_1s += camRecvLen;
 
-            if ((recv_head_status == 0) && (camRecvLen == 12))
+            if ((recv_head_status < 3) && (camRecvLen == 90240))
             {
-                findRet = find_str("CAMERA",img[img_index]+img_recv_index, camRecvLen);
-                if (findRet > 0)
-                {
-                    recv_head_status = 1;
-                    memcpy(img_time_buf[img_index], img[img_index]+img_recv_index + 6, 6);
-                }
-            }
-            else if (camRecvLen == 12)
-            {
-                findRet = find_str("CAMERA",img[img_index]+img_recv_index, camRecvLen);
-                if (findRet > 0)
-                {
-                    memcpy(img_time_buf[img_index], img[img_index]+img_recv_index + 6, 6);
-                    img_recv_index = 0;
-                    recv_head_status = 1;
-                }
-                else
-                {
-                    img_recv_index = 0;
-                    recv_head_status = 0;
-                }
-            }
-            else if (recv_head_status == 0)
-            {
-                //DBG("cam recv error len %d", camRecvLen);
-                //emit disconnectSignals();
-                //break;
-            }
-            else
-            {
+                recv_head_status++;
                 img_recv_index += camRecvLen;
-                
-                if (img_recv_index >= 752*480)
+            }else if ((recv_head_status == 3) && (camRecvLen == 90248))
+            {
+                recv_head_status = 0;
+                frame_fps++;
+
+
+                unsigned char *head = img[img_index] + img_recv_index + 90240;
+
+                if(*(head+0) == 'C' &&
+                        *(head+1) == 'A' &&
+                        *(head+2) == 'M' &&
+                        *(head+3) == 'E')
                 {
-                    //printf("cat success:%d\r\n",img_index);
-                    img_recv_index = 0;
-                    recv_head_status = 0;
-                    //img_time = ros::Time::now();
-                    img_flag = img_index;
-                    img_index++;
-                    if (img_index >= IMG_FRAME_SIZE_MAX)
+                    fcount = *(uint32_t *)(head+4);
+                    if(cfcount == fcount)
                     {
-                        img_index = 0;
+                        cfcount++;
+
+                        //check_count[img_index] = fcount;
+
+                        img_index++;
+                        if (img_index >= IMG_FRAME_SIZE_MAX)
+                        {
+                            img_index = 0;
+                        }
+
+                    }else{
+                        cfcount = fcount + 1;
+                        printf("cam cfcount ERROR %d %d",fcount,cfcount);
                     }
+
+
+                }else{
+                    printf("cam Check ERROR !! %C%C%C%C",*(head+0),*(head+1),*(head+2),*(head+3));
                 }
+
+                img_recv_index = 0;
+
+            }else{
+                if(camRecvLen == 90248)
+                {
+                    recv_head_status = 0;
+                    img_recv_index = 0;
+                }
+                printf("cam ERROR !!");
             }
+
+
+
+
+
+/////////////////////////////////
+            // if ((recv_head_status == 0) && (camRecvLen == 12))
+            // {
+            //     findRet = find_str("CAMERA",img[img_index]+img_recv_index, camRecvLen);
+            //     if (findRet > 0)
+            //     {
+            //         recv_head_status = 1;
+            //         memcpy(img_time_buf[img_index], img[img_index]+img_recv_index + 6, 6);
+            //     }
+            // }
+            // else if (camRecvLen == 12)
+            // {
+            //     findRet = find_str("CAMERA",img[img_index]+img_recv_index, camRecvLen);
+            //     if (findRet > 0)
+            //     {
+            //         memcpy(img_time_buf[img_index], img[img_index]+img_recv_index + 6, 6);
+            //         img_recv_index = 0;
+            //         recv_head_status = 1;
+            //     }
+            //     else
+            //     {
+            //         img_recv_index = 0;
+            //         recv_head_status = 0;
+            //     }
+            // }
+            // else if (recv_head_status == 0)
+            // {
+            //     //DBG("cam recv error len %d", camRecvLen);
+            //     //emit disconnectSignals();
+            //     //break;
+            // }
+            // else
+            // {
+            //     img_recv_index += camRecvLen;
+                
+            //     if (img_recv_index >= 752*480)
+            //     {
+            //         //printf("cat success:%d\r\n",img_index);
+            //         img_recv_index = 0;
+            //         recv_head_status = 0;
+            //         //img_time = ros::Time::now();
+            //         img_flag = img_index;
+            //         img_index++;
+            //         if (img_index >= IMG_FRAME_SIZE_MAX)
+            //         {
+            //             img_index = 0;
+            //         }
+            //     }
+            // }
 
         }
     }
