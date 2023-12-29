@@ -11,7 +11,6 @@ using namespace cv;
 using namespace ros;
 
 int openvio_init(unsigned char flag);
-Time img_get(Mat img_data);
 Time imu_get_data(float *buf);
 
 #endif

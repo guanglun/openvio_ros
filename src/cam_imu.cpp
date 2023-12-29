@@ -6,8 +6,22 @@
 #include <pthread.h>
 #include <termios.h>
 #include <fcntl.h>
+#include <time.h>
+
+#include <ros/ros.h>
+#include <image_transport/image_transport.h>
+#include <opencv2/core/core.hpp>
+#include <opencv2/opencv.hpp>
+#include <sensor_msgs/Imu.h>
+#include <opencv2/highgui/highgui.hpp>
+#include <cv_bridge/cv_bridge.h>
+
+
 #include "cam_imu.h"
 #include "find_str.h"
+
+extern image_transport::Publisher img_pub;
+extern ros::Publisher imu_pub;
 
 using namespace std;
 // using namespace cv;
@@ -16,25 +30,7 @@ using namespace std;
 #define CTRL_EPADDR     0x01
 #define CAM_EPADDR      0x81
 #define IMU_EPADDR      0x82
-
-#define USB_TIMEOUT     1000 //传输数据的时间延迟
-
-// #define GX_OFFSET       0
-// #define GY_OFFSET       0
-// #define GZ_OFFSET       0
-
-#define GX_OFFSET       0.045
-#define GY_OFFSET       0.001
-#define GZ_OFFSET       -0.009
-
-#define IMU_BUF_SIZE    24
-#define IMG_BUF_SIZE    752 * 480
 #define M_PI            3.14159265358979323846
-
-#define REQUEST_CAMERA_START    0xA0
-#define REQUEST_CAMERA_STOP     0xA1
-#define REQUEST_IMU_START       0xB0
-#define REQUEST_IMU_STOP        0xB1
 
 int img_cnt = 0, imu_cnt = 0;
 float imu_buffer[6];
@@ -45,9 +41,10 @@ unsigned char imu_flag=0,img_flag=0;
 Mat img_cam(Size(752, 480), CV_8UC1);
 
 ros::Time imu_time;
-ros::Time img_time;
+ros::Time img_time,img_time_last;
 
-#define IMG_FRAME_SIZE_MAX 30
+#define IMU_BUF_SIZE    24
+#define IMG_BUF_SIZE    752 * 480 * 2
 
 #define IMG_FRAME_SIZE_MAX 30
 #define IMU_FRAME_SIZE_MAX 100
@@ -66,121 +63,25 @@ float a_x,a_y,a_z;
 
 int fd_vn100;
 int vn100_count=0;
-Time img_get(Mat img_data)
-{
-    static uint32_t timer;
-    static uint32_t t1,t1_old;
-    static uint16_t t2,t2_old;
-    static bool is_first = true;
-    static float d_time = 0;
 
-    t1 = (uint32_t)(img_time_buf[img_flag][0]<<24);
-    t1 |= (uint32_t)(img_time_buf[img_flag][1]<<16);
-    t1 |= (uint32_t)(img_time_buf[img_flag][2]<<8);
-    t1 |= (uint32_t)(img_time_buf[img_flag][3]<<0);
+struct timeval tstart;
+struct timeval tend;
+unsigned long timer;
 
-    t2 = (uint16_t)(img_time_buf[img_flag][4]<<8);
-    t2 |= (uint16_t)(img_time_buf[img_flag][5]<<0);
-
-    if(is_first == true)
-    {
-        is_first = false;
-        t1_old = t1;
-        t2_old = t2;
-        return img_time;
-    }
-
-    if(t2 > t2_old)
-    {
-        timer = t2-t2_old;
-    }else{
-        timer = (uint32_t)t2 + 50000 - t2_old;
-    }
-
-    t1_old = t1;
-    t2_old = t2;
-
-    d_time = timer*0.00001;
-    //printf("cam %d\t%d\t%d\t%f\r\n",t1,t2,timer,d_time);
-
-    img_cnt++;
-    memcpy(img_data.data, img[img_flag], IMG_BUF_SIZE);
-
-    img_time = ros::Time(t1/2, (t1%2*50000+t2)*10000);//ros::Time::now();
-
-    //printf("cam %f\r\n",img_time.toSec());
-    return img_time;
-}
-
-Time imu_get_data(float *buf)
-{
-    static uint32_t timer;
-    static uint32_t t1,t1_old;
-    static uint16_t t2,t2_old;
-    static bool is_first = true;
-    static float d_time = 0;
-
-    t1 = (uint32_t)(imu_buf[imu_flag][0]<<24);
-    t1 |= (uint32_t)(imu_buf[imu_flag][1]<<16);
-    t1 |= (uint32_t)(imu_buf[imu_flag][2]<<8);
-    t1 |= (uint32_t)(imu_buf[imu_flag][3]<<0);
-
-    t2 = (uint16_t)(imu_buf[imu_flag][4]<<8);
-    t2 |= (uint16_t)(imu_buf[imu_flag][5]<<0);
-
-    if(is_first == true)
-    {
-        is_first = false;
-        t1_old = t1;
-        t2_old = t2;
-        return imu_time;
-    }
-
-    if(t2 > t2_old)
-    {
-        timer = t2-t2_old;
-    }else{
-        timer = (uint32_t)t2 + 50000 - t2_old;
-    }
-
-    t1_old = t1;
-    t2_old = t2;
-
-    d_time = timer*0.00001;
-    //printf("cam %d\t%d\t%d\t%f\r\n",t1,t2,timer,d_time);
-
-    imu_cnt++;
-    for (unsigned char i = 0; i < 6; i++)
-    {
-        buf[i] = imu_buffer[i];
-    }
-
-    imu_time = ros::Time(t1/2, (t1%2*50000+t2)*10000);
-
-    printf("IMU:%f\t%0.3f\t%0.3f\t%0.3f\t%0.3f\t%0.3f\t%0.3f\t\r\n",
-                    imu_time.toSec(),
-                    imu_buffer[0],imu_buffer[1],imu_buffer[2],
-                    imu_buffer[3],imu_buffer[4],imu_buffer[5]);
-
-
-    
-    return imu_time;
-}
-
+int img_pass_num = 80;
 
 void *timer_thread_run(void *)
 {
     while(1)
     {
         sleep(1);
-        printf("%d %0.2f %d\r\n",frame_fps,((float)recv_count_1s)/1024/1024,vn100_count);
+        //printf("%d %0.2f %d\r\n",frame_fps,((float)recv_count_1s)/1024/1024,vn100_count);
         frame_fps = 0;
         recv_count_1s = 0;
         vn100_count = 0;
     }
     
 }
-
 
 void *cam_catch_thread(void *)
 {
@@ -190,6 +91,10 @@ void *cam_catch_thread(void *)
     int recv_head_status = 0;
     uint8_t head_tmp[1024];
     uint32_t fcount,cfcount;
+
+    std_msgs::Header header;
+    cv::Mat image(cv::Size(752,480),CV_8UC1);
+    sensor_msgs::ImagePtr msg;
 
     printf("cam_catch_thread start\r\n");
 
@@ -231,6 +136,27 @@ void *cam_catch_thread(void *)
                         cfcount++;
                         frame_fps++;
                         //check_count[img_index] = fcount;
+        // gettimeofday(&tstart, NULL);
+                        img_time = ros::Time::now();
+                        header.seq = 0;
+                        header.frame_id = "img";
+                        header.stamp = img_time_last;
+                        img_time_last = img_time;
+                        memcpy(image.data, img[img_index], IMG_BUF_SIZE/2);
+                        msg = cv_bridge::CvImage(header, "mono8", image).toImageMsg();
+
+                        if(img_pass_num <= 0)
+                            img_pub.publish(msg);
+                        else
+                            img_pass_num--;
+
+                        // char imgname[128];
+                        // sprintf(imgname,"img-%d.bmp",fcount);
+                        // cv::imwrite(imgname, image);
+
+        // gettimeofday(&tend, NULL);
+        // timer = 1000000 * (tend.tv_sec-tstart.tv_sec) + tend.tv_usec-tstart.tv_usec;
+        // printf("%ldus\n", timer);
 
                         img_index++;
                         if (img_index >= IMG_FRAME_SIZE_MAX)
@@ -265,19 +191,6 @@ void *cam_catch_thread(void *)
     printf("cam_catch_thread exit\r\n");
     pthread_exit(NULL);
 }
-
-
-
-float buf_data[3][10];
-unsigned char lvbo_cnt=0;
-float lvbo_data[3],lvbo_gyro_data[3];
-
-#define OX -0.0731
-#define OY -0.2291
-#define OZ 0.1741
-#define RX 1.0013
-#define RY 1.0018
-#define RZ 1.0144
 
 int set_port_attr(int fd,
                   int vtime, int vmin)
@@ -336,6 +249,7 @@ int imu_init(char *dev)
 	if (fd_vn100 <= 0)
 	{
 		printf("%s open fail\r\n", dev);
+        return -1;
 	}
 
 	set_port_attr(fd_vn100, 1000, 1000);
@@ -350,8 +264,19 @@ void *imu_catch_thread(void *)
     int rlen;
     unsigned char rdata[1024];
     int sync = 1;
+    ros::Time last_time;
+    sensor_msgs::Imu imu;
 
-    imu_init((char *)"/dev/ttyUSB0");
+
+    int ret = imu_init((char *)"/dev/ttyUSB0");
+    if(ret < 0)
+    {
+        ret = imu_init((char *)"/dev/ttyUSB1");
+        if(ret < 0)
+        {
+            goto exit;
+        }
+    }
 
     while (1)
     {
@@ -373,6 +298,9 @@ void *imu_catch_thread(void *)
 
             if (calculate_imu_crc(rdata, 39) == (unsigned short)(rdata[40] | rdata[39] << 8))
             {
+                ros::Time now = ros::Time::now();
+                imu.header.stamp = now;
+
                 vn100_count++;
                 for (int i = 0; i < 4; i++)
                 {
@@ -387,6 +315,28 @@ void *imu_catch_thread(void *)
                     *((unsigned char *)&a_z+ i)  = rdata[35 + i];
                 }
  
+                imu.header.frame_id = "imu";
+
+                imu.orientation.x = 0.0;//imu_data[7];
+                imu.orientation.y = 0.0;//imu_data[9];
+                imu.orientation.y = 0.0;//imu_data[9];
+                imu.orientation.w = 1.0;//imu_data[8];
+
+                imu.angular_velocity.x = g_x;
+                imu.angular_velocity.y = g_y;    
+                imu.angular_velocity.z = g_z;
+
+                imu.linear_acceleration.x = a_x;
+                imu.linear_acceleration.y = a_y;
+                imu.linear_acceleration.z = a_z;
+
+                imu_pub.publish(imu);
+
+
+                
+                printf("%ld\n",now.toNSec() - last_time.toNSec());
+                last_time = now;
+
 				// printf("%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\r\n",
 				// 	   a_x, a_y, a_z,
 				// 	   g_x, g_y, g_z,
@@ -400,7 +350,7 @@ void *imu_catch_thread(void *)
     }
     return NULL;
 
-
+exit:
     printf("imu_catch_thread exit\r\n");
     pthread_exit(NULL);
 }
@@ -446,28 +396,6 @@ int openvio_init(unsigned char flag)
     {
         printf("Error:libusb_claim_interface\r\n");
         return 1;
-    }
-
-    r = libusb_control_transfer(dev_handle, LIBUSB_REQUEST_TYPE_VENDOR + LIBUSB_ENDPOINT_IN, REQUEST_CAMERA_START, 0, 0, ctrl_buffer, 128, 1000);
-    if (r < 0)
-    {
-        printf("cam libusb_control_transfer fail\r\n");
-        return 1;
-    }
-    else
-    {
-        printf("cam libusb_control_transfer success %c\r\n", ctrl_buffer[0]);
-    }
-
-    libusb_control_transfer(dev_handle, LIBUSB_REQUEST_TYPE_VENDOR + LIBUSB_ENDPOINT_IN, REQUEST_IMU_START, 0, 0, ctrl_buffer, 128, 1000);
-    if (r < 0)
-    {
-        printf("imu_buf libusb_control_transfer fail\r\n");
-        return 1;
-    }
-    else
-    {
-        printf("imu_buf libusb_control_transfer success %c\r\n", ctrl_buffer[0]);
     }
 
     pthread_t cam_thread;
