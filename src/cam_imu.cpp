@@ -70,6 +70,14 @@ unsigned long timer;
 
 int img_pass_num = 80;
 
+void hex_show(uint8_t *sdata,int len)
+{
+    for(int i=0;i<len;i++)
+    {
+        printf("%02X ",sdata[i]);
+    }
+}
+
 void *timer_thread_run(void *)
 {
     while(1)
@@ -95,6 +103,7 @@ void *cam_catch_thread(void *)
     std_msgs::Header header;
     cv::Mat image(cv::Size(752,480),CV_8UC1);
     sensor_msgs::ImagePtr msg;
+    ros::Time last_time;
 
     printf("cam_catch_thread start\r\n");
 
@@ -119,7 +128,7 @@ void *cam_catch_thread(void *)
             {
                 recv_head_status++;
                 img_recv_index += camRecvLen;
-            }else if ((recv_head_status == 3) && (camRecvLen == 90248))
+            }else if ((recv_head_status == 3) && (camRecvLen == 90256))
             {
                 recv_head_status = 0;
                 
@@ -136,8 +145,16 @@ void *cam_catch_thread(void *)
                         cfcount++;
                         frame_fps++;
                         //check_count[img_index] = fcount;
-        // gettimeofday(&tstart, NULL);
-                        img_time = ros::Time::now();
+        //gettimeofday(&tstart, NULL);
+                        uint64_t data_time = *(uint64_t *)(head+8);
+                        ros::Time now = ros::Time((uint32_t)(data_time/1000000000),(uint32_t)(data_time%1000000000));
+
+                        // hex_show(head+8,8);
+                        // printf("%ld\n",*(uint64_t *)(head+8));
+
+                        
+
+                        img_time = now;
                         header.seq = 0;
                         header.frame_id = "img";
                         header.stamp = img_time_last;
@@ -157,6 +174,16 @@ void *cam_catch_thread(void *)
         // gettimeofday(&tend, NULL);
         // timer = 1000000 * (tend.tv_sec-tstart.tv_sec) + tend.tv_usec-tstart.tv_usec;
         // printf("%ldus\n", timer);
+
+
+                        int64_t error_time = now.toNSec() - last_time.toNSec() - 25000000;
+                        //printf("%ld\n",now.toNSec() - last_time.toNSec());
+                    
+                        if(error_time != 0 && error_time != 1000 && error_time != -1000 && error_time != 2000 && error_time != -2000)
+                        {
+                            printf("cam error %ld\n",error_time);
+                        }
+                        last_time = now;
 
                         img_index++;
                         if (img_index >= IMG_FRAME_SIZE_MAX)
@@ -292,27 +319,30 @@ void *imu_catch_thread(void *)
                 }
             }
         }
-        rlen = read(fd_vn100, rdata, 41);
+        rlen = read(fd_vn100, rdata, 49);
         if (rlen > 0)
         {
-
-            if (calculate_imu_crc(rdata, 39) == (unsigned short)(rdata[40] | rdata[39] << 8))
+            if (calculate_imu_crc(rdata, 47) == (unsigned short)(rdata[48] | rdata[47] << 8))
             {
-                ros::Time now = ros::Time::now();
+                uint64_t data_time = *(uint64_t *)(rdata+3);
+                ros::Time now = ros::Time((uint32_t)(data_time/1000000000),(uint32_t)(data_time%1000000000));//ros::Time::now();
                 imu.header.stamp = now;
+                //printf("%ld\n",now.toNSec());
 
+                //hex_show(rdata+3,8);
+                //printf("%ld\n",*(uint64_t *)(rdata+3));
                 vn100_count++;
                 for (int i = 0; i < 4; i++)
                 {
-                    *((unsigned char *)&yaw + i) = rdata[3 + i];
-                    *((unsigned char *)&pitch + i) = rdata[7 + i];
-                    *((unsigned char *)&roll + i) = rdata[11 + i];
-                    *((unsigned char *)&g_x + i) = rdata[15 + i];
-                    *((unsigned char *)&g_y + i) = rdata[19 + i];
-                    *((unsigned char *)&g_z + i) = rdata[23 + i];
-                    *((unsigned char *)&a_x + i) = rdata[27 + i];
-                    *((unsigned char *)&a_y + i) = rdata[31 + i];
-                    *((unsigned char *)&a_z+ i)  = rdata[35 + i];
+                    *((unsigned char *)&yaw + i) = rdata[3 + 8 + i];
+                    *((unsigned char *)&pitch + i) = rdata[7 + 8 + i];
+                    *((unsigned char *)&roll + i) = rdata[11 + 8 + i];
+                    *((unsigned char *)&g_x + i) = rdata[15 + 8 + i];
+                    *((unsigned char *)&g_y + i) = rdata[19 + 8 + i];
+                    *((unsigned char *)&g_z + i) = rdata[23 + 8 + i];
+                    *((unsigned char *)&a_x + i) = rdata[27 + 8 + i];
+                    *((unsigned char *)&a_y + i) = rdata[31 + 8 + i];
+                    *((unsigned char *)&a_z+ i)  = rdata[35 + 8 + i];
                 }
  
                 imu.header.frame_id = "imu";
@@ -333,8 +363,13 @@ void *imu_catch_thread(void *)
                 imu_pub.publish(imu);
 
 
-                
-                printf("%ld\n",now.toNSec() - last_time.toNSec());
+                int64_t error_time = now.toNSec() - last_time.toNSec() - 2500000;
+                //printf("%ld\n",now.toNSec() - last_time.toNSec());
+            
+                if(error_time != 0 && error_time != 1000 && error_time != -1000 && error_time != 2000 && error_time != -2000)
+                {
+                    printf("imu error %ld\n",error_time);
+                }
                 last_time = now;
 
 				// printf("%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\r\n",
