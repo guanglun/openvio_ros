@@ -83,7 +83,7 @@ void *timer_thread_run(void *)
     while(1)
     {
         sleep(1);
-        //printf("%d %0.2f %d\r\n",frame_fps,((float)recv_count_1s)/1024/1024,vn100_count);
+        printf("%d %0.2f %d\r\n",frame_fps,((float)recv_count_1s)/1024/1024,vn100_count);
         frame_fps = 0;
         recv_count_1s = 0;
         vn100_count = 0;
