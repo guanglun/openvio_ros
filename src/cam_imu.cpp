@@ -157,7 +157,7 @@ void *cam_catch_thread(void *)
                         img_time = now;
                         header.seq = 0;
                         header.frame_id = "img";
-                        header.stamp = img_time_last;
+                        header.stamp = img_time;
                         img_time_last = img_time;
                         memcpy(image.data, img[img_index], IMG_BUF_SIZE/2);
                         msg = cv_bridge::CvImage(header, "mono8", image).toImageMsg();
